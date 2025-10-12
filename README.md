@@ -1,2 +1,2 @@
-# for-zen
-for zen setup
+# gh-app
+this is to host test app

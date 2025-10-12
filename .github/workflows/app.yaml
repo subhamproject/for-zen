@@ -1,0 +1,108 @@
+name: do-the-job
+on: push
+jobs:
+  start-runner:
+    name: Start self-hosted EC2 runner
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      label: ${{ steps.start-ec2-runner.outputs.label }}
+      ec2-instance-id: ${{ steps.start-ec2-runner.outputs.ec2-instance-id }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: arn:aws:iam::xxxxxxxxx:role/gh-runner
+          aws-region: us-east-1
+      - name: Start EC2 runner
+        id: start-ec2-runner
+        uses: machulav/ec2-github-runner@v2.4.2
+        with:
+          mode: start
+          pre-runner-script: |
+                 sudo dnf makecache --refresh
+                 sudo dnf -y install lld
+                 sudo yum install libicu maven -y
+          github-token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+          #ec2-image-id: ami-052064a798f08f0d3
+          ec2-instance-type: t3.micro
+          #subnet-id: subnet-050e3eb4fe80e6240
+          #security-group-id: sg-0d13de0fb04505ec5
+          availability-zones-config: >
+            [
+              {"imageId":"ami-052064a798f08f0","subnetId":"subnet-09069c7b68ed","securityGroupId":"sg-032dab7600f41"},{"imageId":"ami-052064a798f08f0d3","subnetId":"subnet-0e16a774cc63b39","securityGroupId":"sg-032dab7600f413,"region":"us-east-1"}
+            ]
+          #iam-role-name: my-role-name # optional, requires additional permissions
+          aws-resource-tags: > # optional, requires additional permissions
+            [
+              {"Key": "Name", "Value": "ec2-gh-runner"},
+              {"Key": "GitHubRepository", "Value": "${{ github.repository }}"}
+            ]
+          block-device-mappings: > # optional, to customize EBS volumes
+            [
+              {"DeviceName": "/dev/sda1", "Ebs": {"VolumeSize": 20, "VolumeType": "gp3"}}
+            ]
+  do-the-job:
+    name: Do the job on the runner
+    permissions:
+      id-token: write
+      contents: read
+    needs: start-runner # required to start the main job when the runner is ready
+    runs-on: ${{ needs.start-runner.outputs.label }} # run the job on the newly created runner
+    steps:
+      - name: Set lower case owner name
+        run: |
+          echo "OWNER_LC=${OWNER,,}" >> ${GITHUB_ENV}
+        env:
+          OWNER: '${{ github.repository_owner }}'
+
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+         java-version: 21
+         distribution: 'corretto'
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Setup Nodejs
+        uses: actions/setup-node@v5
+        with:
+          node-version: 18
+
+      - name: Build with Maven
+        run: mvn clean install
+
+  stop-runner:
+    permissions:
+      id-token: write
+      contents: read
+    name: Stop self-hosted EC2 runner
+    needs:
+      - start-runner # required to get output from the start-runner job
+      - do-the-job # required to wait when the main job is done
+    runs-on: ubuntu-latest
+    if: ${{ always() }} # required to stop the runner even if the error happened in the previous jobs
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::xxxxxxxxx:role/gh-runner
+          aws-region: us-east-1
+
+      - name: Stop EC2 runner
+        uses: machulav/ec2-github-runner@v2.4.2
+        with:
+          mode: stop
+          github-token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+          label: ${{ needs.start-runner.outputs.label }}
+          ec2-instance-id: ${{ needs.start-runner.outputs.ec2-instance-id }}

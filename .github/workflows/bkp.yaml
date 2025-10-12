@@ -1,0 +1,114 @@
+name: infra-aws-core
+
+on:
+  workflow_dispatch:
+    inputs:
+      Env:
+        description: 'Environment'
+        required: true
+        default: 'prod'
+      LaunchMode:
+        description: 'Launch mode for Github runner'
+        required: true
+        default: 'FARGATE'
+        options:
+          - EC2
+          - FARGATE
+
+jobs:
+  activate-github-runner:
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.Env }}
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      gitrunner_vm_id: ${{ steps.runner-label.outputs.vm_id }}
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@master
+        with:
+          role-to-assume: arn:aws:iam::541167681081:role/gh-runner
+          aws-region: us-east-1
+
+      - name: Check identity
+        id: validate
+        run: |
+          aws sts get-caller-identity
+
+      - name: Generate Runner label
+        id: runner-label
+        run: |
+          task_vm_id=$(uuidgen)
+          echo "vm_id=$task_vm_id" >> $GITHUB_OUTPUT
+          echo "VM ID generated: $task_vm_id"
+
+      - name: Identify applicable configuration
+        id: task-config
+        shell: bash
+        run: |
+          if [[ "${{ github.event.inputs.LaunchMode }}" == "EC2" ]]; then
+            echo "NET_CONFIG=" >> $GITHUB_OUTPUT
+            echo "TASK_DEF_NAME=${{ github.event.inputs.Env }}_ec2_git_runner" >> $GITHUB_OUTPUT
+          else
+            echo "NET_CONFIG=--network-configuration 'awsvpcConfiguration={subnets=[subnet-0156b09e273f36fff,subnet-01d548f5503d3bf0e],securityGroups=[sg-0d51362089eb95c3a],assignPublicIp=ENABLED}'" >> $GITHUB_OUTPUT
+            #echo "TASK_DEF_NAME=${{ github.event.inputs.Env }}_fg_git_runner" >> $GITHUB_OUTPUT
+            echo "TASK_DEF_NAME=gha-runner-task-family-new" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Start ECS Task for Github self-hosted runner
+        id: create-task
+        run: >
+          aws ecs run-task 
+          --cluster gh-runner 
+          --launch-type "${{ github.event.inputs.LaunchMode }}" 
+          --task-definition "${{ steps.task-config.outputs.TASK_DEF_NAME }}" 
+          --overrides '{"containerOverrides": [{"name": "gha-runner-container",
+          "environment" : [{"name": "RUNNER_NAME", "value": "${{ steps.task-config.outputs.TASK_DEF_NAME }}-${{ steps.runner-label.outputs.vm_id }}"},
+          {"name": "RUNNER_LABELS", "value": "${{ steps.runner-label.outputs.vm_id }}"}
+          ]}]}'
+          ${{ steps.task-config.outputs.NET_CONFIG }}
+
+  build-code:
+    needs: [activate-github-runner]
+    runs-on: [self-hosted, "${{ needs.activate-github-runner.outputs.gitrunner_vm_id }}"]
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Testing build
+        run: |
+          MY_WD=$(pwd)
+          echo "Hello world from ${MY_WD}"
+      - name: Export Env Vars
+        run: |
+          BRANCH_NAME="${GITHUB_REF##*/}"
+          echo "BRANCH_NAME=${BRANCH_NAME}" >> $GITHUB_ENV
+          echo "REPOSITORY_NAME=${GITHUB_REPOSITORY#*/}" >> $GITHUB_ENV
+          echo "SHORT_SHA=${GITHUB_SHA::7}" >> $GITHUB_ENV
+
+      - name: Set lower case owner name
+        run: |
+          echo "OWNER_LC=${OWNER,,}" >> ${GITHUB_ENV}
+        env:
+          OWNER: '${{ github.repository_owner }}'
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 14
+        uses: actions/setup-java@v5
+        with:
+         java-version: 21
+         distribution: 'corretto'
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Build with Maven
+        run: mvn clean install
