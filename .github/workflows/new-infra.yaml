@@ -1,0 +1,118 @@
+name: Create infra VPC Subnets for GH Runner
+on:
+  workflow_dispatch:
+    inputs:
+      EnvName:
+        description: 'Environment Where Infra to be Deployed'
+        type: choice
+        required: true
+        default: 'Dev'
+        options:
+          - Dev
+          - Prod
+          - PPE
+          - STG
+      Service:
+        description: 'Choose the Service you wish to Deploy'
+        required: true
+        type: choice
+        default: 'vpc'
+        options:
+          - vpc
+          - ec2
+          - lambda
+          - ecs
+      S3Bucket:
+        description: 'Choose S3 bucket name for Terraform Backend Statefile'
+        required: true
+        type: choice
+        default: 'gh-runners'
+        options:
+          - gh-runners
+          - gh-test
+      DeployOrDestroy:
+        description: 'Do you wish to Deploy or Destroy Infra'
+        required: true
+        type: choice
+        default: 'apply'
+        options:
+          - apply
+          - destroy
+      Confirm:
+        description: 'Are you sure you want to proceed with the above selections?'
+        required: true
+        default: 'no'
+        options:
+          - no
+          - yes
+
+env:
+  REPO_NAME: "${{ github.event.repository.name }}"
+  SERVICE_DIR: "./infra/${{ github.event.inputs.Service }}"
+defaults:
+  run:
+    shell: bash
+
+permissions:
+ id-token: write
+ contents: read
+ actions: read
+ security-events: write
+ packages: read
+
+jobs:
+  build:
+    name: create-infra
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: ${{ github.event.inputs.Confirm == 'yes' }}
+
+    steps:
+    - uses: actions/checkout@v5
+      with:
+          fetch-depth: 0
+
+    - name: Configure AWS credentials from Test account
+      uses: aws-actions/configure-aws-credentials@v5
+      with:
+        role-to-assume: arn:aws:iam::xxxxxxxxxx:role/gh-infra
+        aws-region: us-east-1
+
+    - name: Setup Terraform with specified version on the runner
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: 1.6.0
+
+    - name: Running Format check for ${{ github.event.inputs.Service }} on ${{ github.event.inputs.EnvName }}
+      id: fmt
+      run: terraform fmt -check && terraform fmt --recursive
+      working-directory: ${{ env.SERVICE_DIR }}
+    - name: Running init for ${{ github.event.inputs.Service }} on ${{ github.event.inputs.EnvName }}
+      id: init
+      run: terraform init -backend-config="bucket=${{ github.event.inputs.S3Bucket }}" -backend-config="key=${{ github.event.inputs.EnvName }}/${{ github.event.inputs.Service }}/${{ github.event.inputs.Service }}.tf" -backend-config="region=us-east-1" 
+      working-directory: ${{ env.SERVICE_DIR }}
+    - name: Running Terraform validate for ${{ github.event.inputs.Service }} on ${{ github.event.inputs.EnvName }}
+      id: validate
+      run: terraform validate
+      working-directory: ${{ env.SERVICE_DIR }}
+    - name: Running Plan for ${{ github.event.inputs.Service }} on ${{ github.event.inputs.EnvName }}
+      id: plan
+      run: |
+        if [ "${{ github.event.inputs.Service }}" = "vpc" ]; then
+          terraform plan -var="region=us-east-1" -var="envname=${{ github.event.inputs.EnvName }}"  -detailed-exitcode
+        else
+          terraform plan -var="region=us-east-1" -var="bucket=${{ github.event.inputs.S3Bucket }}" -var="envname=${{ github.event.inputs.EnvName }}"  -detailed-exitcode
+        fi
+      working-directory: ${{ env.SERVICE_DIR }}
+      continue-on-error: true
+    - name: Getting Terraform Plan status for ${{ github.event.inputs.Service }} on ${{ github.event.inputs.EnvName }}
+      if: steps.plan.outcome == 'failure'
+      run: exit 1
+    - name: Deploying ${{ github.event.inputs.Service }} on ${{ github.event.inputs.EnvName }}
+      run: |
+        if [ "${{ github.event.inputs.Service }}" = "vpc" ]; then
+            terraform ${{ github.event.inputs.DeployOrDestroy }}  -var="region=us-east-1" -var="envname=${{ github.event.inputs.EnvName }}" -auto-approve -parallelism=20
+        else
+           terraform ${{ github.event.inputs.DeployOrDestroy }} -var="bucket=${{ github.event.inputs.S3Bucket }}" -var="region=us-east-1" -var="envname=${{ github.event.inputs.EnvName }}" -auto-approve -parallelism=20
+        fi
+      working-directory: ${{ env.SERVICE_DIR }}

@@ -1,0 +1,101 @@
+name: Build and Push runner image
+
+on: workflow_dispatch
+
+env:
+  REPO_NAME: "${{ github.event.repository.name }}"
+
+permissions:
+  id-token: write
+  contents: read
+  actions: read
+  security-events: write
+  packages: read
+
+jobs:
+  build:
+    name: runner
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Export Env Vars
+        run: |
+          BRANCH_NAME="${GITHUB_REF##*/}"
+          echo "BRANCH_NAME=${BRANCH_NAME}" >> $GITHUB_ENV
+          echo "REPOSITORY_NAME=${GITHUB_REPOSITORY#*/}" >> $GITHUB_ENV
+          echo "SHORT_SHA=${GITHUB_SHA::7}" >> $GITHUB_ENV
+
+      - name: Set lower case owner name
+        run: |
+          echo "OWNER_LC=${OWNER,,}" >> ${GITHUB_ENV}
+        env:
+          OWNER: '${{ github.repository_owner }}'
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python and install dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          pip install ansible boto3 botocore
+
+      - name: Configure AWS credentials from Test account
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: arn:aws:iam::xxxxxxx:role/gh-infra
+          aws-region: us-east-1
+
+      - name: Create dynamic inventory file  #private-ip-address
+        run: |
+          cat > aws_ec2.yaml <<EOL
+          plugin: aws_ec2
+          filters:
+            instance-state-name: running
+            "tag:Name": "Dev First Server-1"
+          compose:
+            ansible_host: public_ip_address
+          keyed_groups:
+            - key: tags.Name
+            - prefix: instance_type
+              key: instance_type
+            - key: placement.region
+              prefix: aws_region
+          hostnames:
+           - public_ip_address
+          strict: False
+          EOL
+
+
+      - name: Save SSH private key
+        run: |
+          echo "${{ secrets.SSH_PVT_KEY }}" > ec2_key.pem
+          chmod 600 ec2_key.pem
+
+      - name: Download WAR file
+        working-directory: ${{ github.workspace }}
+        run: wget https://tomcat.apache.org/tomcat-7.0-doc/appdev/sample/sample.war -O  ${{ github.workspace }}/sample.war
+
+      - name: Run Ansible playbook to deploy WAR to Tomcat
+        working-directory: ${{ github.workspace }}
+        run: |
+          export ANSIBLE_HOST_KEY_CHECKING=False
+          export ANSIBLE_DEPRECATION_WARNINGS=False
+          ansible-playbook -i aws_ec2.yaml playbook/deploy_tomcat_war.yml --private-key ec2_key.pem -u ec2-user
+
+      - name: Login to Amazon ECR Public
+        id: login-ecr-public
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push docker image to Amazon ECR Public
+        env:
+          REGISTRY: ${{ steps.login-ecr-public.outputs.registry }}
+          REPOSITORY: gh-runner
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $REGISTRY/$REPOSITORY:${{ env.BRANCH_NAME }}-${{ env.SHORT_SHA }} \
+          -t $REGISTRY/$REPOSITORY:${{ env.BRANCH_NAME }}-demo-latest -f docker/dockerfile .
+                       docker push $REGISTRY/$REPOSITORY:${{ env.BRANCH_NAME }}-${{ env.SHORT_SHA }}
+                       docker push $REGISTRY/$REPOSITORY:${{ env.BRANCH_NAME }}-demo-latest

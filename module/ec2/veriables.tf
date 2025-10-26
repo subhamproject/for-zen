@@ -13,19 +13,10 @@ variable "instance_type" {
   description = "EC2 instance Type"
 }
 
-variable "pub_subnet_id" {
-  type        = list
-  description = "CIDR block for Public Subnet"
-}
 
 variable "pvt_subnet_id" {
-  type        = list
+  type        = list(any)
   description = "CIDR block for Private Subnet"
-}
-
-variable "vpc_id" {
-  type        = string
-  description = "VPC ID"
 }
 
 variable "key_pair" {
@@ -33,3 +24,12 @@ variable "key_pair" {
   description = "AWS Key Pair"
 }
 
+variable "vpc_id" {
+  type        = string
+  description = "VPC ID"
+}
+
+variable "pub_subnet_id" {
+  type        = list(any)
+  description = "CIDR block for Public Subnet"
+}
