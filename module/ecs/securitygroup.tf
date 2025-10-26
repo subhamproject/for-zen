@@ -13,7 +13,7 @@ resource "aws_security_group" "alb" {
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
- tags = {
+  tags = {
     Name = "${local.name} ECS ALB Security Group"
   }
 
@@ -34,7 +34,7 @@ resource "aws_security_group" "ecs_tasks" {
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
-tags = {
+  tags = {
     Name = "${local.name} ECS Task Security Group"
   }
 

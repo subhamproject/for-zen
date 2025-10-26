@@ -15,10 +15,10 @@ resource "aws_lb_target_group" "this" {
   vpc_id      = local.vpc_id
   target_type = "ip"
   health_check {
-    interval            = 30
+    interval            = 180
     path                = "/"
-    timeout             = 5
-    healthy_threshold   = 5
+    timeout             = 60
+    healthy_threshold   = 2
     unhealthy_threshold = 5
     matcher             = "200-399"
   }
