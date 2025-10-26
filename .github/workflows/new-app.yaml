@@ -45,7 +45,7 @@ jobs:
       - name: Configure AWS credentials from Test account
         uses: aws-actions/configure-aws-credentials@v5
         with:
-          role-to-assume: arn:aws:iam::xxxxxxx:role/gh-infra
+          role-to-assume: arn:aws:iam::xxxxxxxx:role/gh-infra
           aws-region: us-east-1
 
       - name: Create dynamic inventory file  #private-ip-address
@@ -90,6 +90,7 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build, tag, and push docker image to Amazon ECR Public
+        id: build-image
         env:
           REGISTRY: ${{ steps.login-ecr-public.outputs.registry }}
           REPOSITORY: gh-runner
@@ -99,3 +100,24 @@ jobs:
           -t $REGISTRY/$REPOSITORY:${{ env.BRANCH_NAME }}-demo-latest -f docker/dockerfile .
                        docker push $REGISTRY/$REPOSITORY:${{ env.BRANCH_NAME }}-${{ env.SHORT_SHA }}
                        docker push $REGISTRY/$REPOSITORY:${{ env.BRANCH_NAME }}-demo-latest
+                       echo "image=$REGISTRY/$REPOSITORY:${{ env.BRANCH_NAME }}-${{ env.SHORT_SHA }}" >> $GITHUB_OUTPUT
+
+      - name: Download task definition
+        run: |
+           aws ecs describe-task-definition --task-definition nginx-task --query taskDefinition > ${{ github.workspace }}/task-definition.json
+
+      - name: Fill in the new image ID in the Amazon ECS task definition
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+         task-definition: ${{ github.workspace }}/task-definition.json
+         container-name: nginx
+         image: ${{ steps.build-image.outputs.image }}
+
+      - name: Deploy Amazon ECS task definition
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+         task-definition: ${{ steps.task-def.outputs.task-definition }}
+         service: nginx-service
+         cluster: Dev-ECScluster
+         wait-for-service-stability: true

@@ -1,4 +1,4 @@
-module "Instance" {
+module "EC2" {
   source        = "../../module/ec2"
   envname       = local.envname
   ami           = local.ami

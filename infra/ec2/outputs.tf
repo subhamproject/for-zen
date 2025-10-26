@@ -1,7 +1,7 @@
 output "private_ip" {
-  value = module.Instance.private_ip
+  value = module.EC2.private_ip
 }
 
 output "private_dns" {
-  value = module.Instance.private_dns
+  value = module.EC2.private_dns
 }

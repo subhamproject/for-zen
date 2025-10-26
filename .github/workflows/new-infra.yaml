@@ -75,7 +75,7 @@ jobs:
     - name: Configure AWS credentials from Test account
       uses: aws-actions/configure-aws-credentials@v5
       with:
-        role-to-assume: arn:aws:iam::xxxxxxxxxx:role/gh-infra
+        role-to-assume: arn:aws:iam::xxxxxxxxxxx:role/gh-infra
         aws-region: us-east-1
 
     - name: Setup Terraform with specified version on the runner

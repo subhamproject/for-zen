@@ -18,6 +18,9 @@ resource "aws_security_group" "alb_sg" {
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
+ tags = {
+    Name = "${local.name} EC2 ALB Security Group"
+  }
 }
 
 # EC2 Security Group — allows port 8080 only from ALB SG
@@ -33,12 +36,23 @@ resource "aws_security_group" "tomcat_sg" {
     protocol        = "tcp"
     security_groups = [aws_security_group.alb_sg.id]
   }
+  
+ ingress {
+    description = "Allow SSH from anywhere"
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
 
   egress {
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
+  }
+ tags = {
+    Name = "${local.name} Demo EC2 Security Group"
   }
 }
 
