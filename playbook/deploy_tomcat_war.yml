@@ -1,0 +1,18 @@
+---
+- name: Copy WAR file to remote EC2 servers
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    war_source_path: "{{ lookup('env', 'GITHUB_WORKSPACE') }}/sample.war"
+    ansible_python_interpreter: /usr/bin/python3
+    war_dest_path: /opt/tomcat9/webapps/app.war
+
+  tasks:
+    - name: Run Shell Command
+      command: ls -l /opt/tomcat9/webapps
+
+    - name: Copy WAR file
+      copy:
+       src: "{{ war_source_path }}"
+       dest: "{{ war_dest_path }}"
